@@ -10,6 +10,7 @@ import matplotlib.gridspec as gridspec
 import numpy as np
 import os
 from scipy.ndimage.filters import gaussian_filter1d
+from mpl_toolkits.mplot3d import Axes3D
 # custom modules
 import seastarV4 as ssv
 import style
@@ -47,9 +48,13 @@ def loadData(analysisPath, condition):
     return dataset
     
 # read all datasets    
-paths = ['/media/monika/MyPassport/Ns/Analysis', '/media/monika/MyPassport/Os/Analysis']
+paths = ['G:/Data/SeastarData/Analysis/N', 'G:/Data/SeastarData/Analysis/O',\
+         'G:/Data/SeastarData/Analysis/P', 'G:/Data/SeastarData/Analysis/T',\
+         'G:/Data/SeastarData/Analysis/V']
 # always use order single, single, both
-conditions = [['Nestle', 'Nutella', 'Both'], ['Orzo', 'Okra', 'Both']]
+conditions = [['Nestle', 'Nutella', 'BothNs'], ['Orzo', 'Okra', 'BothOs'],\
+              ['Pomme', 'Persimmon', 'BothPs'], ['Tortellini', 'TiraMisu', 'BothTs'],\
+              ['Vermicelli', 'Vanilla', 'BothVs']]
 # what to plot
 plotLoc = False
 
@@ -102,19 +107,28 @@ for pindex, path in enumerate(paths):
         dset = Data[path][c]
         nStars = dset['pars']['NStars']
         # plot tracks in 2D
-       
         for n in range(nStars):
             size = dset['3DTracks'][:,n].T.shape
             
-            X,Y,Z =np.pad(dset['3DTracks'][:,n].T,((0,0),(0,12900-size[1])),mode='constant', constant_values=(np.nan,))
+            if size[1]<12900:
+                tmpCoor = np.pad(dset['3DTracks'][:,n].T,((0,0),(0,int(12900-size[1]))),mode='constant', constant_values=(np.nan,))
+            else:
+                tmpCoor = dset['3DTracks'][:,n].T
+            # crop tp 12900
+            X,Y,Z = tmpCoor[:,:12900]
+            
             #print len(X)
             velocity = np.sqrt(np.diff(X)**2 +np.diff(Y)**2+np.diff(Z)**2)*3 # in cm/min
             #velocity = velocity[np.isfinite(velocity)]
             veloTmp.append(velocity)
             coords.append([X,Y,Z])
             b = dset['brightness']
-            b = np.pad(b,(0,12900-size[1]),mode='constant', constant_values=(np.nan,))
+            
+            if size[1]<12900:
+                b = np.pad(b,(0,12900-size[1]),mode='constant', constant_values=(np.nan,))
+            b = b[:12900]
             brightnessTmp.append(b>np.mean(dset['brightness']))
+           
     # calculate distance between solo and paired and randomized animals
     
     for i in range(100):
@@ -135,11 +149,14 @@ for pindex, path in enumerate(paths):
     XB2, YB2, ZB2 = coords[3] #second of paired animals
     distB = np.sqrt((XB1 - XB2)**2 +(YB1 - YB2)**2 +(ZB1 - ZB2)**2)
     # randomize order
-    tmpCoords = np.array(coords[3]).T
-    np.random.shuffle(tmpCoords)
-    
-    XB2, YB2, ZB2 = tmpCoords.T #second of paired animals
-    distR = np.sqrt((XB1 - XB2)**2 +(YB1 - YB2)**2 +(ZB1 - ZB2)**2)
+    distR = []
+    for k in range(100):
+        tmpCoords = np.array(coords[3]).T
+        np.random.shuffle(tmpCoords)
+        
+        XB2, YB2, ZB2 = tmpCoords.T #second of paired animals
+        distR.append(np.sqrt((XB1 - XB2)**2 +(YB1 - YB2)**2 +(ZB1 - ZB2)**2))
+    distR = np.nanmean(np.array(distR), axis=0)
     
     results[path]['velocity'] = veloTmp
     
@@ -183,11 +200,15 @@ for pindex, path in enumerate(paths):
     
     # make barplot of day and night velocities
     ax = plt.subplot(gs[pindex,1])
-    style.mkStyledBoxplot(fig, ax,np.arange(4), dayV, dcolors, plotConditions, alpha=0.8)
-    style.mkStyledBoxplot(fig, ax,np.arange(4)+0.5, nightV, dcolors, plotConditions, alpha=0.3)
+    #style.mkStyledBoxplot(fig, ax,np.arange(4), dayV, dcolors, plotConditions, alpha=0.8)
+    #style.mkStyledBoxplot(fig, ax,np.arange(4)+0.5, nightV, dcolors, plotConditions, alpha=0.3)
+    plt.scatter(np.arange(4), [np.nanmean(dayVel) for dayVel in dayV], color='r', label='day')
+    plt.errorbar(np.arange(4), [np.nanmean(dayVel) for dayVel in dayV], [np.nanstd(dayVel) for dayVel in dayV], color='r', linestyle='none')
+    plt.scatter(np.arange(4)+0.5, [np.nanmean(nVel) for nVel in nightV], color='C0', label='night')
+    plt.errorbar(np.arange(4)+0.5, [np.nanmean(nVel) for nVel in nightV], [np.nanstd(nVel) for nVel in nightV], color='C0', linestyle='none')
     ax.set_ylim([0,10])
     ax.set_xlim([-1,5])
-    ax.set_xticks(np.arange(4)+0.25)
+    ax.set_xticks(np.arange(4)+0.25, plotConditions)
     gs.tight_layout(fig)
     
     
@@ -202,7 +223,7 @@ for pindex, path in enumerate(paths):
     dB = results[path]['distanceB']
     dR = results[path]['distanceRnd']
     #b = results[path]['brightness']
-    bins = np.arange(0,120,1) # distance in cm. 120 is longest axis
+    bins = np.arange(0,100,1) # distance in cm. 120 is longest axis
     x = bins[:-1]+0.5*np.diff(bins[:2])# xaxis for plots
     # distribution of distances for each star
     # find ranges of solo distance for time shifted (bootstrapped-ish) data
@@ -253,6 +274,70 @@ for pindex, path in enumerate(paths):
     gs.tight_layout(fig)    
 
 
+fig = plt.figure('Velocities (Time)', figsize=(8,8))
+gs = gridspec.GridSpec(len(Data.keys()), 2, width_ratios=[1,1])
+
+
+dcolors = [style.UCred[0], style.UCblue[0], style.UCred[1], style.UCblue[1]]
+plotConditions = ['Seastar 1 (Alone)', 'Seastar 2 (Alone)', 'Seastar 1 (Both)', 'Seastar 2 (Both)']
+# make an illustrative plot with paths and such
+for pindex, path in enumerate(paths):
+    v = results[path]['velocity']
+    b = results[path]['brightness']
+    dS = results[path]['distanceS']
+    dB = results[path]['distanceB']
+    ax = plt.subplot(gs[pindex,0])
+    for cindex in range(4):
+        plt.plot(v[cindex], color=dcolors[cindex], zorder=-cindex, alpha=1, label=plotConditions[cindex])
+#        hist, bins = np.histogram(v[cindex][np.isfinite(v[cindex])], np.arange(0,10,0.1), normed=True)
+#        #plt.step()
+#        #plt.fill_between(bins[:-1]+0.5*np.diff(bins[:2]),y1= hist,lw=2, step='post')#, label=conditions[cindex], color=dcolors[cindex], zorder=-cindex, alpha=0.5)
+#        plt.plot(bins[:-1]+0.5*np.diff(bins[:2]), hist,lw=2, color=dcolors[cindex], zorder=-cindex, alpha=1, label=plotConditions[cindex])
+    plt.xlabel('Time (frames)') 
+    plt.ylabel('Velocity (cm/min)')
+    plt.legend() 
+   
+    # make line plot o distance over time
+    ax = plt.subplot(gs[pindex,1])
+    plt.plot(np.nanmean(dS, axis=0), color='C1', zorder=-cindex, alpha=1, label='Distance Alone')
+    plt.plot(dB, color='C0', zorder=-cindex, alpha=1, label='Distance Both')
+    plt.plot(b[2]*np.max(dB)*1.05)
+    plt.fill_between(np.arange(len(dB)), np.zeros(len(dB)), np.ones(len(dB))*np.max(dB)*1.05, where=b[2])
+    plt.legend()
+    gs.tight_layout(fig)
+    
+    
+
+fig = plt.figure('Mean distances and velocities', figsize=(8,8))
+gs = gridspec.GridSpec(2, 1)
+
+
+dcolors = [style.UCred[0], style.UCblue[0], style.UCred[1], style.UCblue[1]]
+plotConditions = ['Seastar 1 (Alone)', 'Seastar 2 (Alone)', 'Seastar 1 (Both)', 'Seastar 2 (Both)']
+# make an illustrative plot with distance box plots
+meanVS1,meanVS2, meanVB1,meanVB2, meandS, meandR, meandB = [],[],[], [], [], [], []
+for pindex, path in enumerate(paths):
+    v = results[path]['velocity']
+    dS = results[path]['distanceS']
+    dB = results[path]['distanceB']
+    dR = results[path]['distanceRnd']
+    # solo velocities
+    meanVS1.append(np.nanmean(v[0]))
+    meanVS2.append(np.nanmean(v[1]))
+    # both velocities
+    meanVB1.append(np.nanmean(v[2]))
+    meanVB2.append(np.nanmean(v[3]))
+    meandS.append(np.nanmean(dS))
+    meandB.append(np.nanmean(dB))
+    meandR.append(np.nanmean(dR))
+
+ax = plt.subplot(gs[0,0])
+style.mkStyledBoxplot(fig, ax,np.arange(4), [meanVS1, meanVS2, meanVB1, meanVB2], dcolors, plotConditions, alpha=0.8)
+ax = plt.subplot(gs[1,0])
+style.mkStyledBoxplot(fig, ax,np.arange(3), [meandS, meandB, meandR], dcolors, ['Solo', 'Both',' Random'], alpha=0.8)
+gs.tight_layout(fig)
+plt.show()
+
 #    b = results[path]['brightness']
 #    ax = plt.subplot(gs[pindex,2])
 #    
@@ -295,49 +380,3 @@ for pindex, path in enumerate(paths):
 #        
 #        
     
-gs.tight_layout(fig)
-plt.show()
-
-fig = plt.figure('Activity as a function of time', figsize=(20,9))
-gs = gridspec.GridSpec(3, 4,
-                           width_ratios=[1,1, 2, 1])
-for dindex, dataSet in enumerate(data):                         
-    
-    linked3D, bg1, bg2, brightness, time, pars = dataSet
-    
-    velocity, distance = calculateProperties(linked3D, pars)
-    
-    for vi, v in enumerate(velocity):
-        v = gaussian_filter1d(v, 20)
-        ax = plt.subplot(gs[dindex,0])
-        ax.set_title(conditions[dindex])
-        ax.plot(time, v, alpha=0.9, color=c[vi])
-        brightness -= np.min(brightness)
-        brightness /= np.max(brightness)
-        #ax.plot(brightness*np.max(v))
-        
-        ax.fill_between(time, 0, 20, where=brightness<np.mean(brightness), color=style.UCgray[1])
-        ax.set_ylim([0,20])
-        ax.set_ylabel('Velocity (cm/min)')
-        ax.set_xlabel('time (min)')
-        
-        ax = plt.subplot(gs[dindex,1])
-        ax.scatter(brightness, velocity[vi], s=1, color =c[vi] , alpha=0.05)
-        ax.set_ylim([0,20])
-        ax.set_ylabel('Velocity (cm/min)')
-        ax.set_xlabel('Brightness (a.u.)')
-        
-    if len(velocity)>1:
-        
-        ax = plt.subplot(gs[dindex,2])
-        ax.scatter(velocity[0], velocity[1], s=1, color =style.UCmain , alpha=0.05)
-        ax.set_ylim([0,20])
-        ax.set_ylabel('Velocity star 1 (cm/min)')
-        ax.set_xlabel('Velocity star 2 (cm/min)')
-        ax.set_ylim([0,20])
-        ax.set_xlim([0,20])
-        
-        
-    
-gs.tight_layout(fig)
-plt.show()

@@ -5,26 +5,29 @@ seastar tracking with separate linkage and separable steps,
 @author: monika
 """
 
-import skimage
+#import skimage
 import datetime
 from skimage import io, img_as_float
-from skimage.color import rgb2gray
+#from skimage.color import rgb2gray
+import matplotlib as mpl
+from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pylab as plt
 import numpy as np
-from skimage.filters import gaussian, try_all_threshold
-from skimage.feature import blob_doh
+from skimage.filters import gaussian#, try_all_threshold
+from skimage.feature import peak_local_max
 import os, re
-from skimage.filters import threshold_yen, threshold_otsu
+from skimage.filters import threshold_yen#, threshold_otsu
 from skimage.segmentation import clear_border
 from skimage.measure import label, regionprops
-from skimage.morphology import closing, square, opening
-from skimage.color import label2rgb
-import matplotlib.patches as mpatches
-from mpl_toolkits.mplot3d import Axes3D
-from scipy.signal import savgol_filter, medfilt
+from skimage.morphology import closing, square, opening, watershed
+#from skimage.color import label2rgb
+#import matplotlib.patches as mpatches
+#from mpl_toolkits.mplot3d import Axes3D
+#from scipy.signal import savgol_filter, medfilt
 from skimage.transform import warp, rotate
-from skimage.filters.rank import median
-from skimage.morphology import disk
+#from skimage.filters.rank import median
+#from skimage.morphology import disk
+from scipy import ndimage as ndi
 #=============================================================================
 #
 #       I/O
@@ -53,6 +56,13 @@ def imread_convert(f, flag='SS1', rgb=False):
         if flag=='SS2':
             return img_as_float(io.imread(f, as_grey=True))[::-1,::-1]
         return img_as_float(io.imread(f, as_grey=True))
+    
+def imread_convertRGB(f, flag='SS1'):
+    """reads in tricolor information"""
+    if flag=='SS2':
+        return img_as_float(io.imread(f))[::-1,::-1,]
+    return img_as_float(io.imread(f))[:,:,]
+    
 
 def writeStatus(fname, action):
     """write current analysis steps in a status file. action is a string"""
@@ -165,12 +175,12 @@ def rotationAngle(bgIm, paramDict):
     bg1n = rotate(bgIm, (theta)*360/(np.pi*2))
     # rotate a set of points
     c, s = np.cos(theta), np.sin(theta)
-    print c, s
+    print 'Rotation: ',(theta)*360/(np.pi*2)
     T = np.matrix(np.array([paramDict['imWidth']/2., paramDict['imHeight']/2.]))
     R = np.matrix(np.array([[c,s], [-s, c]]))
    
     xn, yn = np.dot(R, np.vstack([x,y])-T)+T
-    
+    plt.figure('Rotated image')
     plt.subplot(111)
     plt.imshow(bg1n)
     plt.plot(locs1[:,0], locs1[:,1], 'ro')
@@ -178,13 +188,13 @@ def rotationAngle(bgIm, paramDict):
     plt.show()
     return theta
   
-def findObjects(trackIm0, paramDict, flag):
+def findObjects(trackIm0, paramDict, flag, plot=False):
     """find objects after image segmentation etc and return pertinent parameters.""" 
     # invert image and get rid of some smaller noisy parts by gaussian smoothing
     # invert image and get rid of some smaller noisy parts by gaussian smoothing
     trackIm = np.abs(trackIm0)
     width, height = trackIm.shape
-    trackIm = gaussian(trackIm, sigma = 7)
+    trackIm = gaussian(trackIm, sigma = 3)
     # block out strange area in SS2
     if flag =='SS2':
         trackIm[70:145,530:610] = 0
@@ -192,8 +202,14 @@ def findObjects(trackIm0, paramDict, flag):
     #thresh = np.percentile(trackIm,[100-100/width*height])
     # apply threshold
     thresh = threshold_yen(trackIm)
-    
     bw = opening(trackIm > thresh, square(5))
+    #distance = ndi.distance_transform_edt(bw)
+    #local_maxi = peak_local_max(distance, indices=False, footprint=np.ones((5, 5)),
+    #                        labels=bw)
+    #markers = ndi.label(local_maxi)[0]
+    #labels = watershed(-distance, markers, mask=bw)
+    
+    
     # remove artifacts connected to image border
     cleared = clear_border(bw)
     # label image regions
@@ -202,14 +218,17 @@ def findObjects(trackIm0, paramDict, flag):
     rprops =  regionprops(label_image, trackIm)
     #
     
-    # show tracking
-#    plt.subplot(221)
-#    plt.imshow(trackIm)
-#    plt.subplot(222)
-#    plt.imshow(bw)
-#    
-#    plt.subplot(223)
-#    plt.imshow(label_image)
+    #show tracking
+    if plot:
+        plt.subplot(221)
+        plt.imshow(trackIm0)
+        plt.subplot(222)
+        plt.imshow(bw)
+        plt.subplot(223)
+        plt.imshow(label_image)
+        plt.subplot(224)
+        plt.show(block=True)
+        plt.waitforbuttonpress()
     locs = []
     for region in rprops:
         yob, xob = region.centroid
@@ -311,8 +330,9 @@ def initializePos3D1(ss1Im, ss2Im, paramDict, coords1, coords2, lastLocs = None)
     
     
 def initializePos3D(ss1Im, ss2Im, paramDict, coords1, coords2, lastLocs = None, star=0):
-    fig = plt.figure('Star number {}. Click on the corresponding star in each image.'.format(star), figsize=(24,12))
+    fig = plt.figure('Star number {}. Click on the corresponding star in each image. Enter to confirm prior location, any other key to move on.'.format(star), figsize=(24,12))
     plt.subplot(121)
+    
     plt.imshow(ss1Im)
     class Clicker:
         def __init__(self, fig):
@@ -325,14 +345,15 @@ def initializePos3D(ss1Im, ss2Im, paramDict, coords1, coords2, lastLocs = None, 
     
         def __call__(self, event):
             print('click', event)
-            
+            print event.key
             if event.key is not None:
-                ### allow only two clicks
+                # store that we are done
+                self.nothing = True
                 fig.canvas.mpl_disconnect(self.cid)
                 fig.canvas.mpl_disconnect(self.cid2)
                 plt.close(fig)
-                print 'Done'
-            elif event.inaxes:
+                print 'Done', self.nothing
+            elif event.inaxes and len(self.locs)<2:
                 #### check if points are within images
                 self.locs.append((event.xdata, event.ydata))
 
@@ -356,8 +377,12 @@ def initializePos3D(ss1Im, ss2Im, paramDict, coords1, coords2, lastLocs = None, 
             plt.scatter(lastLocs[-1,n,2], lastLocs[-1,n,3], s=15,marker='*', color=colors[n], label='Z={:.1f}'.format(lastLocs[-1,n,-2]))
             plt.legend()
     plt.tight_layout()
-    plt.show()
+    #plt.waitforbuttonpress()
+    while not clicker.nothing:
+        plt.pause(0.1)
+    print 'Done for realz'
     locs = clicker.locs
+    
     if len(locs)<2:
         # just grab the last known location
         # if confirmed by enter, accept location as good and set flag to 1
@@ -368,7 +393,7 @@ def initializePos3D(ss1Im, ss2Im, paramDict, coords1, coords2, lastLocs = None, 
     
     x2,y2 = locs[0]
     x1,y1 = locs[1]
-    
+    print 'done'
     # calculate 3D location too
     X,Y,Z = calculate3DPoint(x1, y1, x2, y2, paramDict)
     # note: ginput returns x,y but images are typically y,x in array axes
@@ -473,7 +498,7 @@ def linkingTrajectories3D(impath, impath2,  analysisPath, tracks, paramDict,cond
                 coords1[int(matches[imIndex][0])] = [np.nan, np.nan]
                 coords2[int(matches[imIndex][1])] = [np.nan, np.nan]
               # some progress reporting
-            if imIndex%1==0:
+            if imIndex%10==0:
                 print 'Linking frame ', imIndex
             
             # initialize the first star
@@ -503,26 +528,28 @@ def linkingTrajectories3D(impath, impath2,  analysisPath, tracks, paramDict,cond
                     linked3D[imIndex,n] = click
                 currLoc = click
                 # if we have a good quality points, keep clicking
-                if click[-1] != 1:
+                if click[-1] == -1:
                     nLost = -5
             # calculate all putative 3d points
             locations = []
             ids = []
             for xi, (x,y) in enumerate(coords1):
                 for di,(d,e) in enumerate(coords2):
-                    X,Y,Z = calculate3DPoint(d,e,x,y, paramDict)
-                    locations.append([x,y,d,e,X,Y,Z,1])
-                    ids.append([xi,di])
+                    if np.abs(x-d)<paramDict['xTolerance'] :
+                        X,Y,Z = calculate3DPoint(d,e,x,y, paramDict)
+                        locations.append([x,y,d,e,X,Y,Z,1])
+                        ids.append([xi,di])
             # calculate distance of current to putative locations
                 # get latest coordinates
             x1,y1,x2,y2,X0,Y0,Z0,_ =  currLoc
             dist = np.ones(len(locations))*np.nan
             for kij in range(len(locations)):
-                xt,_,_,_,X,Y,Z, _ =  locations[kij]
+                _,_,_,_,X,Y,Z, _ =  locations[kij]
                 if xmin <= X <=xmax and  ymin <= Y <=ymax and  zmin <= Z <=zmax:
                     dist[kij] = np.sqrt((X-X0)**2+(Y-Y0)**2+(Z-Z0)**2)
                 else:
-                    print X,Y,Z
+                    'no match ', imIndex
+                    #print X,Y,Z
             # ignore frames where we don't have any valid matches anyway
             if len(dist)==0 or np.all(np.isnan(dist)):
                 continue
@@ -532,10 +559,9 @@ def linkingTrajectories3D(impath, impath2,  analysisPath, tracks, paramDict,cond
             
             #print dist, coords1[match][0]-x1
             if dist[match] < (paramDict['3DMaxDist']) and np.abs(locations[match][0]-x1)<paramDict['xTolerance']:
-                # if previous flag bad, leave it that way
-                if linked3D[imIndex,0, -1
                 
-                ] == -1:
+                # if previous flag bad, leave it that way
+                if linked3D[imIndex,0, -1] == -1:
                     linked3D[imIndex,n] =  locations[match]
                     linked3D[imIndex,n, -1] =  -1
                 else:
@@ -574,7 +600,48 @@ def linkingTrajectories3D(impath, impath2,  analysisPath, tracks, paramDict,cond
     plt.savetxt(os.path.join(analysisPath, 'linked3d_{}.txt'.format(condition)), np.reshape(linked3D, (linked3D.shape[0], -1)), header = "#xs1, ys1, xs2, ys2, X,Y,Z")
     return linked3D
                 
-
+def identifyStars(impath, condition, analysisPath, paramDict, tracks, show_figs= False):
+    """Store color information of tracked objects to use for identification."""
+    allImFiles = loadSubset(impath , extension=paramDict['ext'], start = paramDict['start'],end = paramDict['end'], step = paramDict['step'])
+    colors = np.zeros((len(allImFiles), paramDict['NStars'], 3))
+    w = 5
+    for imIndex, imFile in enumerate(allImFiles):
+        if imIndex%100==0:
+            print 'Identifying the stars in frame ', imIndex
+        # read image in RGB format
+        trackIm = imread_convertRGB(imFile, flag='SS1')
+        
+        for n in range(paramDict['NStars']):
+            x,y = np.array(tracks[imIndex, n], dtype=int)
+            if show_figs:
+                plt.figure()
+                ax = plt.subplot(211)
+                
+                plt.imshow(trackIm)
+                
+                rect = mpl.patches.Rectangle((int(x-2*w),int(y-2*w)),2*w,2*w,linewidth=1,edgecolor='r',facecolor='none')
+                ax.add_patch(rect)
+                # Add the patch to the Axes
+                plt.subplot(212)
+                plt.plot(x,y, 'ro')
+                
+                plt.imshow(trackIm[np.max([0,y-w]):y+w,np.max([0,x-w]):x+w])
+                plt.show(block=True)
+                plt.waitforbuttonpress()
+            # crop a small box around center - maybe 15 pixel diameter
+            
+            meanCol = np.mean(trackIm[np.max([0,y-w]):y+w,np.max([0,x-w]):x+w], axis=(0,1))
+            
+            colors[imIndex, n] = meanCol
+    # write seastar colors to file
+    plt.savetxt(os.path.join(analysisPath, 'colors_{}.txt'.format(condition)), np.reshape(colors, (colors.shape[0], -1)), header = "#colors for each star in linked3D")
+    # plot color trajectory
+    c = ['#001f3f', '#85144b']
+    ax = plt.subplot(111, projection = '3d')
+    for n in range(paramDict['NStars']):
+        ax.scatter(colors[:,n,0], colors[:,n,1], colors[:,n,2], color=c[n])
+    plt.show()
+    return colors
     
 #=============================================================================
 #
@@ -582,16 +649,14 @@ def linkingTrajectories3D(impath, impath2,  analysisPath, tracks, paramDict,cond
 #
 #=============================================================================
 
-
-
-def main():
-    imPath = '/media/monika/MyPassport/Ns/{}{}Solo'
-    imPath = '/media/monika/MyPassport/Ns/{}{}Ns'
-    analysisPath = '/media/monika/MyPassport/Ns/Analysis/'
+def main(imPath, analysisPath, condition):
+#    imPath = '/media/monika/MyPassport/Ns/{}{}Solo'
+#    imPath = '/media/monika/MyPassport/Ns/{}{}Ns'
+#    analysisPath = '/media/monika/MyPassport/Ns/Analysis/'
 ##########################################
 #    imPath = '/media/monika/MyPassport/Os/{}{}Solo'
-    imPath = '/media/monika/MyPassport/Os/{}{}Os'
-    analysisPath = '/media/monika/MyPassport/Os/Analysis/'
+#    imPath = '/media/monika/MyPassport/Os/{}{}Os'
+#    analysisPath = '/media/monika/MyPassport/Os/Analysis/'
 ##############################################
 #    imPath = '/media/monika/MyPassport/Qs/{}{}'
 #    #imPath = '/media/monika/MyPassport/Qs/{}{}Os'
@@ -601,20 +666,21 @@ def main():
 #    #imPath = '/media/monika/MyPassport/Ps/{}{}Ps'
 #    analysisPath = '/media/monika/MyPassport/Ps/Analysis/'
     
-   
+# The analysis has three parts: Calculating image backgrounds and starting acouple of files, for example parameter files.
+    # The second steps detects objects and stores locations
+    # The third part links the object locations to trajectories with some human input.
     bgCalc = 0
     tracking = 0
-    linking = 1#True
-    # which movie to analyze
-    condition = 'Both'
-    # save parameters
-    # calibrate the rotation data
+    linking = 0#True
+    identification = 1
+    
     
     # read the stored data and background images
     if bgCalc:
         for flag in ['SS1', 'SS2']:
+            # default parameter dictionary
             paramDict = {'start':0,
-             'end':12045,
+             'end':12960,
              'step':1,
              'bgstep': 50,
              'ext' : ".jpg",
@@ -642,12 +708,16 @@ def main():
             writePars(os.path.join(analysisPath, '{}_pars.txt'.format(condition)), paramDict)
             # write status
             writeStatus(os.path.join(analysisPath, '{}_status.txt'.format(condition)), \
-                        action = "BG detection {} frames {} - {}".format(flag, paramDict['start'], paramDict['end']))
+                        action = "BG detection {} frames {} - {}\n".format(flag, paramDict['start'], paramDict['end']))
    
     if tracking:
         for flag in ['SS1','SS2']:
             # load params
-            paramDict =  readPars(os.path.join(analysisPath, '{}_pars.txt'.format(condition)))
+            try:
+                print 'Loading parameter file'
+                paramDict =  readPars(os.path.join(analysisPath, '{}_pars.txt'.format(condition)))
+            except IOError:
+                print 'parameter file not found. Run a background calculation first.'
             # load existing background
             dayBgIm, nightBgIm = imread_convert(os.path.join(analysisPath, 'BG_Day_{}_{}.jpg'.format(condition,flag))).astype(np.float)\
             , imread_convert(os.path.join(analysisPath, 'BG_Night_{}_{}.jpg'.format(condition, flag))).astype(np.float)
@@ -655,28 +725,51 @@ def main():
             time, nactivity, brightness = np.loadtxt(os.path.join(analysisPath, 'BgData_{}_{}.txt'.format(condition, flag)), unpack=True)
             meanBrightness = np.mean(brightness)
             # run object detection
+            print "Running seastar detection. We'll be counting stars"
             detectStars(imPath.format(flag, condition), condition, analysisPath, paramDict, dayBgIm, nightBgIm, meanBrightness, flag, show_figs= False)
             # write status
             writeStatus(os.path.join(analysisPath, '{}_status.txt'.format(condition)), \
-                        action = "Tracking {} frames {} - {}".format(flag, paramDict['start'], paramDict['end']))
-
+                        action = "Tracking {} frames {} - {}\n".format(flag, paramDict['start'], paramDict['end']))
+            print 'Tracking finished'
     
     if linking:
-        
-        # load params
-        paramDict =  readPars(os.path.join(analysisPath, '{}_pars.txt'.format(condition)))
-        print repr(paramDict)
-        plt.waitforbuttonpress()
+        try:
+            print 'Loading parameter file'
+            paramDict =  readPars(os.path.join(analysisPath, '{}_pars.txt'.format(condition)))
+        except IOError:
+            print 'parameter file not found. Run a background calculation and tracking first.'
+        print 'Press button to start linking. This occasionally requires manual input. Instructions are displayed on top of plots.'
+        #plt.waitforbuttonpress()
         # load existing tracks
         tracks = loadTracks(analysisPath, condition)
         # link simultaneously in 3D
         linkingTrajectories3D(imPath.format('SS1', condition),imPath.format('SS2', condition), analysisPath, tracks,  paramDict, condition)
-      
-        
-        
-        
-        writeStatus(os.path.join(analysisPath, '{}_status.txt'.format(condition)), \
-                        action = "3D linking frames {} - {}".format(paramDict['start'], paramDict['end']))
 
+        writeStatus(os.path.join(analysisPath, '{}_status.txt'.format(condition)), \
+                        action = "3D linking frames {} - {}\n".format(paramDict['start'], paramDict['end']))
+        print 'Linking finished'
+        
+    if identification:
+        try:
+            print 'Loading parameter file'
+            paramDict =  readPars(os.path.join(analysisPath, '{}_pars.txt'.format(condition)))
+        except IOError:
+            print 'parameter file not found. Run a background calculation and tracking first.'
+        linked3D = plt.loadtxt(os.path.join(analysisPath, 'linked3d_{}.txt'.format(condition)))
+        try:
+            linked3D = np.reshape(linked3D, (-1, paramDict['NStars'], 7))
+        except ValueError:
+            linked3D = np.reshape(linked3D, (-1, paramDict['NStars'], 8))
+        print 'Running identification by color on existing tracks.'
+        # run SS1
+        tracks2dSS1 = linked3D[:,:,:2]
+        identifyStars(imPath.format('SS1', condition), condition, analysisPath, paramDict,tracks2dSS1, show_figs= False)
+        
 if __name__ == "__main__":
-    main()
+    
+    
+    analysisPath = 'G:/Data/SeastarData/Analysis/V/'
+    # which movie to analyze
+    condition = 'Vanilla'
+    imPath = 'G:/Data/SeastarData/Vs/{}{}'
+    main(imPath, analysisPath, condition)

@@ -74,8 +74,8 @@ def mkStyledBoxplot(fig, ax, x_data, y_data, clrs, lbls, alpha = 0.5) :
         dotxd = [xd - 0.25*dx]*len(yd) + jitter
 
         # make alpha stronger
-        #ax.plot(dotxd, yd, linestyle='None', marker='o', color=cl, \
-        #        markersize=3, alpha=0.5)  
+        ax.plot(dotxd, yd, linestyle='None', marker='o', color=cl, \
+                markersize=3, alpha=0.5)  
     ymin = min([min(m) for m in y_data])
     ymax = max([max(m) for m in y_data])
     dy = 10 ** np.floor(np.log10(ymin))
