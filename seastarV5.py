@@ -604,7 +604,7 @@ def identifyStars(impath, condition, analysisPath, paramDict, tracks, show_figs=
     """Store color information of tracked objects to use for identification."""
     allImFiles = loadSubset(impath , extension=paramDict['ext'], start = paramDict['start'],end = paramDict['end'], step = paramDict['step'])
     colors = np.zeros((len(allImFiles), paramDict['NStars'], 3))
-    w = 5
+    w = 7
     for imIndex, imFile in enumerate(allImFiles):
         if imIndex%100==0:
             print 'Identifying the stars in frame ', imIndex
@@ -635,7 +635,9 @@ def identifyStars(impath, condition, analysisPath, paramDict, tracks, show_figs=
             colors[imIndex, n] = meanCol
     # write seastar colors to file
     plt.savetxt(os.path.join(analysisPath, 'colors_{}.txt'.format(condition)), np.reshape(colors, (colors.shape[0], -1)), header = "#colors for each star in linked3D")
-    # plot color trajectory
+    # store a sample image in analysis files
+    io.imsave(os.path.join(analysisPath, 'Sample_{}.jpg'.format(condition)), imread_convertRGB(allImFiles[0], flag='SS1'))
+                # plot color trajectory
     c = ['#001f3f', '#85144b']
     ax = plt.subplot(111, projection = '3d')
     for n in range(paramDict['NStars']):
@@ -768,8 +770,8 @@ def main(imPath, analysisPath, condition):
 if __name__ == "__main__":
     
     
-    analysisPath = 'G:/Data/SeastarData/Analysis/V/'
+    analysisPath = 'G:/Data/SeastarData/Analysis/P/'
     # which movie to analyze
-    condition = 'Vanilla'
-    imPath = 'G:/Data/SeastarData/Vs/{}{}'
+    condition = 'Persimmon+'
+    imPath = 'G:/Data/SeastarData/Ps/{}{}'
     main(imPath, analysisPath, condition)

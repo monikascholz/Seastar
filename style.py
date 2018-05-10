@@ -98,7 +98,7 @@ def mkStyledBoxplot(fig, ax, x_data, y_data, clrs, lbls, alpha = 0.5) :
     ax.xaxis.set_ticks_position('bottom') # turn off top ticks
     ax.get_xaxis().set_tick_params(direction='out')
     ax.patch.set_facecolor('white') # ('none')
-    ax.set_xticklabels(lbls, rotation=30, fontsize=14)
+    ax.set_xticklabels(lbls, rotation=30)
     
     #ax.set_aspect(2.0 / (0.1*len(lbls)), adjustable=None, anchor=None)
     #ax.set_aspect(0.01 / (len(y_data)), adjustable=None, anchor=None)        
